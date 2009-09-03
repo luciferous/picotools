@@ -10,12 +10,12 @@ from dbus.mainloop.glib import DBusGMainLoop
 
 class VolumeManager(object):
 
-  GET = "amixer get PCM"
-  SET = "amixer set PCM %s"
+  GET = "amixer get Master"
+  SET = "amixer set Master %s"
 
   def __init__(self, current=80, min=0, max=255, auto_detect=True):
     if auto_detect:
-      status, output, (min, max, current) = self._getminmaxcurrent()
+      status, output, (min, max, current, ismute) = self._getmixerinfo()
       if status != 0:
         sys.stderr.write(output)
         raise Exception("Could not get volume from amixer.")
@@ -23,30 +23,20 @@ class VolumeManager(object):
     self.min = min
     self.max = max
     self.current = current
-    self.ismute = not self.current
+    self.ismute = ismute
+    self._step = (max - min) / 12
 
   def toggle(self):
-    if self.ismute:
-      return self.unmute()
-    return self.mute()
-
-  def mute(self):
-    status, output = self._set(self.min)
+    status, output = commands.getstatusoutput(self.SET % 'toggle')
     if status == 0:
-      self.ismute = True
+      self.ismute = not self.ismute
     return status, output
 
-  def unmute(self):
-    status, output = self._set(self.current)
-    if status == 0:
-      self.ismute = False
-    return status, output
+  def louder(self, step=None):
+    return self._offset(step or self._step)
 
-  def louder(self, offset=8):
-    return self._offset(offset)
-
-  def softer(self, offset=-8):
-    return self._offset(offset)
+  def softer(self, step=None):
+    return self._offset(step or -self._step)
 
   def _offset(self, offset):
     if offset < 0:
@@ -63,12 +53,13 @@ class VolumeManager(object):
     assert level <= self.max, "Failed: %d <= %d" % (level , self.max)
     return commands.getstatusoutput(self.SET % level)
 
-  def _getminmaxcurrent(self):
+  def _getmixerinfo(self):
     status, output = commands.getstatusoutput(self.GET)
-    range, lchan, rchan  = re.findall("Playback (\d+(?: - \d+)?)", output)
+    range, current = re.findall("Playback (\d+(?: - \d+)?)", output)
     min, max = map(int, range.split(' - '))
-    current = int(lchan)
-    return status, output, (min, max, current)
+    current = int(current)
+    ismute = output.endswith('[off]')
+    return status, output, (min, max, current, ismute)
 
   def _getvolume(self):
     _, _, (_, _, current) = self.getminmaxcurrent()
